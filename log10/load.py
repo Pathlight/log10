@@ -572,6 +572,9 @@ def intercepting_decorator(func):
         shadow_completion_url = None
         if isinstance(shadow_url, str):
             shadow_completion_url = shadow_url + "/api/completions"
+            logger.debug(f"shadow_completion_url INDEED set 2({type(shadow_url)}): {shadow_completion_url}")
+        else:
+            logger.debug(f"shadow_completion_url NOT set: {type(shadow_url)}")
         output = None
         result_queue = queue.Queue()
 
@@ -599,6 +602,7 @@ def intercepting_decorator(func):
             start_time = time.perf_counter()
             output = func_with_backoff(func, *args, **kwargs)
             duration = time.perf_counter() - start_time
+            # jcnote presence of this log implies completion uuid was gotten from server
             logger.debug(f"TIMED BLOCK - LLM call duration: {duration}")
         except Exception as e:
             if USE_ASYNC:
@@ -758,10 +762,15 @@ def intercepting_decorator(func):
                         res = post_request(_url, log_row)
                         if res.status_code != 200:
                             logger.error(f"LOG10: failed to insert in log10: {log_row} with error {res.text}")
+                        # jcnote no log at all if this goes thru successfully, status is finished
                         if isinstance(shadow_completion_url, str):
+                            logger.debug(f"making shadow request when finished 2. {type(shadow_completion_url)} {completionID}")
                             _shadow_url = f"{shadow_completion_url}/{completionID}"
                             # response from shadow request is ignored for now
-                            post_request(_shadow_url, log_row)
+                            res2 = post_request(_shadow_url, log_row)
+                            logger.debug(f"shadow res2({type(res2)}): {res2.text}")
+                        else:
+                            logger.debug(f"no shadow when finished 2. {type(shadow_completion_url)} {completionID}")
                     except Exception as e:
                         logging.warn(f"LOG10: failed to log: {e}. Skipping")
 
