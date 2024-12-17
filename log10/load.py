@@ -29,6 +29,7 @@ logging.basicConfig(
 logger: logging.Logger = logging.getLogger("LOG10")
 
 url = os.environ.get("LOG10_URL")
+shadow_url = os.environ.get("LOG10_SHADOW_URL")
 token = os.environ.get("LOG10_TOKEN")
 org_id = os.environ.get("LOG10_ORG_ID")
 
@@ -98,7 +99,7 @@ def post_request(url: str, json_payload: dict = {}) -> requests.Response:
         logger.error(f"HTTP request: POST Request Exception - {e}")
         raise
 
-
+# jc todo: unclear how to shadow this sessions request?
 post_session_request = functools.partial(post_request, url + "/api/sessions", {})
 
 
@@ -224,13 +225,17 @@ def run_async_in_thread(completion_url, log_row, result_queue):
     result_queue.put(result)
 
 
-def log_sync(completion_url, log_row):
+def log_sync(completion_url, log_row, shadow_completion_url=None):
     completionID = None
 
     try:
         res = post_request(completion_url)
         last_completion_response_var.set(res.json())
         completionID = res.json().get("completionID", None)
+
+        # response from shadow request is ignored for now
+        if isinstance(shadow_completion_url, str):
+            post_request(shadow_completion_url)
 
         if completionID is None:
             logging.warn("LOG10: failed to get completionID from log10. Skipping log.")
@@ -240,6 +245,12 @@ def log_sync(completion_url, log_row):
             log_url(res, completionID)
         _url = f"{completion_url}/{completionID}"
         res = post_request(_url, log_row)
+
+        if isinstance(shadow_completion_url, str):
+            _shadow_url = f"{shadow_completion_url}/{completionID}"
+            # response from shadow request is ignored for now
+            post_request(_shadow_url, log_row)
+
     except Exception as e:
         logging.warn(f"LOG10: failed to get completionID from log10: {e}")
         return None
@@ -558,6 +569,9 @@ def intercepting_decorator(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         completion_url = url + "/api/completions"
+        shadow_completion_url = None
+        if isinstance(shadow_url, str):
+            shadow_completion_url = shadow_url + "/api/completions"
         output = None
         result_queue = queue.Queue()
 
@@ -575,7 +589,7 @@ def intercepting_decorator(func):
                         },
                     ).start()
                 else:
-                    completionID = log_sync(completion_url=completion_url, log_row=log_row)
+                    completionID = log_sync(completion_url=completion_url, log_row=log_row, shadow_completion_url=shadow_completion_url)
 
                     if completionID is None:
                         logging.warn("LOG10: failed to get completionID from log10. Skipping log.")
@@ -611,6 +625,9 @@ def intercepting_decorator(func):
             log_row["failure_reason"] = failure_reason
             try:
                 res = post_request(completion_url + "/" + completionID, log_row)
+                if isinstance(shadow_completion_url, str):
+                    # response from shadow request is ignored for now
+                    post_request(shadow_completion_url + "/" + completionID, log_row)
             except Exception as le:
                 logger.warning(f"LOG10: failed to log: {le}. Skipping, but raising LLM error.")
             raise e
@@ -741,6 +758,10 @@ def intercepting_decorator(func):
                         res = post_request(_url, log_row)
                         if res.status_code != 200:
                             logger.error(f"LOG10: failed to insert in log10: {log_row} with error {res.text}")
+                        if isinstance(shadow_completion_url, str):
+                            _shadow_url = f"{shadow_completion_url}/{completionID}"
+                            # response from shadow request is ignored for now
+                            post_request(_shadow_url, log_row)
                     except Exception as e:
                         logging.warn(f"LOG10: failed to log: {e}. Skipping")
 
